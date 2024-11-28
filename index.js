@@ -1,131 +1,201 @@
-const fs = require('fs').promises;
+const swaggerJsdoc = require('swagger-jsdoc');
 const express = require('express');
-const { Command } = require('commander');
-const multer = require('multer');
+const fs = require('fs');
 const path = require('path');
-
-const program = new Command();
-
-program
-  .option('-h, --host <host>', 'Адреса сервера')
-  .option('-p, --port <port>', 'Порт сервера')
-  .option('-c, --cache <cache>', 'Шлях до кеша')
-  .parse(process.argv);
-
-const { host, port, cache } = program.opts();
-
-const cacheDir = path.isAbsolute(cache) ? cache : path.join(__dirname, cache);
-
-async function create_d(dir) {
-  try {
-    await fs.access(dir).catch(() => fs.mkdir(dir, { recursive: true }));
-    console.log(`Директорія '${dir}' готова.`);
-  } catch (error) {
-    console.error('Помилка при створенні директорії:', error);
-  }
-}
-
-create_d(cacheDir);
+const multer = require('multer');
+const swaggerDocs = require('./swagger');
 
 const app = express();
+const PORT = process.env.PORT || 3001;
+const NOTES_DIR = path.join(__dirname, 'notes');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const upload = multer();
+if (!fs.existsSync(NOTES_DIR)) {
+  fs.mkdirSync(NOTES_DIR);
+}
 
-
-app.get('/notes/:name', async (req, res) => {
-    const { name } = req.params;
-    const filePath = path.join(cacheDir, name);
-  
-    try {
-      const note = await fs.readFile(filePath, 'utf8');
-      return res.status(200).send(note);
-    } catch (error) {
-      return res.status(404).send('Не знайдено');
-    }
-  });
-  
-
-  app.put('/notes/:name', async (req, res) => {
-    const { name } = req.params;
-    const text = req.body.text;
-    const filePath = path.join(cacheDir, name);
-  
-    if (!text) {
-      return res.status(400).send('Текст нотатки не надано');
-    }
-  
-    try {
-      await fs.writeFile(filePath, text);
-      return res.status(200).send('Нотатка оновлена');
-    } catch (error) {
-      return res.status(500).send('Помилка при оновленні нотатки');
-    }
-  });
-  
-
-app.delete('/notes/:name', async (req, res) => {
-  const { name } = req.params;
-  const filePath = path.join(cacheDir, name);
-
-  try {
-    await fs.unlink(filePath);
-    return res.status(200).send('Нотатка видалена');
-  } catch (error) {
-    return res.status(404).send('Не знайдено');
-  }
+/**
+ * @swagger
+ * /:
+ *   get:
+ *     summary: Welcome message
+ *     responses:
+ *       200:
+ *         description: Returns a welcome message.
+ */
+app.get('/', (req, res) => {
+  res.send('Welcome to my API!');
 });
 
-app.get('/notes', async (req, res) => {
-    try {
-      const files = await fs.readdir(cacheDir);
-      const notesList = await Promise.all(
-        files.map(async (file) => {
-          const note = await fs.readFile(path.join(cacheDir, file), 'utf8');
-          return { name: file, text: note };
-        })
-      );
-      return res.status(200).json(notesList);
-    } catch (error) {
-      return res.status(500).send('Помилка при зчитуванні нотаток');
-    }
-  });
-
-  app.post('/write', upload.none(), async (req, res) => {
-    const { note_name, note } = req.body;
+/**
+ * @swagger
+ * /notes/{name}:
+ *   get:
+ *     summary: Get a note by name
+ *     parameters:
+ *       - in: path
+ *         name: name
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The name of the note
+ *     responses:
+ *       200:
+ *         description: The content of the note.
+ *       404:
+ *         description: Note not found.
+ */
+app.get('/notes/:name', (req, res) => {
+  const noteName = req.params.name;
+  const notePath = path.join(NOTES_DIR, noteName + '.txt');
   
-    if (!note_name || !note) {
-      return res.status(400).send('Назва та зміст нотатки обов\'язкові');
-    }
+  if (!fs.existsSync(notePath)) {
+    return res.status(404).send('Not found');
+  }
   
-    const filePath = path.join(cacheDir, note_name);
-    try {
-      await fs.access(filePath).then(() => {
-        throw new Error('Нотатка вже існує');
-      }).catch(async (err) => {
-        if (err.message === 'Нотатка вже існує') throw err;
-        await fs.writeFile(filePath, note);
-        return res.status(201).send('Нотатка створена');
-      });
-    } catch (error) {
-      console.error('Помилка при створенні нотатки:', error);
-      return res.status(error.message === 'Нотатка вже існує' ? 400 : 500).send(error.message);
+  const noteContent = fs.readFileSync(notePath, 'utf-8');
+  res.send(noteContent);
+});
+
+/**
+ * @swagger
+ * /notes/{name}:
+ *   put:
+ *     summary: Update a note by name
+ *     parameters:
+ *       - in: path
+ *         name: name
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The name of the note
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               text:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Note updated.
+ *       404:
+ *         description: Note not found.
+ *       400:
+ *         description: Bad request.
+ */
+app.put('/notes/:name', (req, res) => {
+  const noteName = req.params.name;
+  const notePath = path.join(NOTES_DIR, noteName + '.txt');
+  
+  if (!fs.existsSync(notePath)) {
+    return res.status(404).send('Not found');
+  }
+
+  const newText = req.body.text;
+  
+  if (typeof newText === 'undefined') {
+    return res.status(400).send('Bad request: text is undefined');
+  }
+
+  fs.writeFileSync(notePath, newText);
+  res.send('Updated');
+});
+
+/**
+ * @swagger
+ * /notes/{name}:
+ *   delete:
+ *     summary: Delete a note by name
+ *     parameters:
+ *       - in: path
+ *         name: name
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The name of the note
+ *     responses:
+ *       200:
+ *         description: Note deleted.
+ *       404:
+ *         description: Note not found.
+ */
+app.delete('/notes/:name', (req, res) => {
+  const noteName = req.params.name;
+  const notePath = path.join(NOTES_DIR, noteName + '.txt');
+  
+  if (!fs.existsSync(notePath)) {
+    return res.status(404).send('Not found');
+  }
+
+  fs.unlinkSync(notePath);
+  res.send('Deleted');
+});
+
+/**
+ * @swagger
+ * /notes:
+ *   get:
+ *     summary: Get all notes
+ *     responses:
+ *       200:
+ *         description: A list of notes.
+ */
+app.get('/notes', (req, res) => {
+  const notes = fs.readdirSync(NOTES_DIR).map(file => {
+    const notePath = path.join(NOTES_DIR, file);
+    if (fs.statSync(notePath).isFile()) {
+      const name = path.basename(file, '.txt');
+      const text = fs.readFileSync(notePath, 'utf-8');
+      return { name, text };
     }
-  });
+  }).filter(note => note !== undefined);
 
-  app.get('/UploadForm.html', (req, res) => {
-    const filePath = path.join('C:', 'Users', 'PC', 'bc2024-5', 'UploadForm.html');
-    res.sendFile(filePath, (err) => {
-      if (err) {
-        console.error('Помилка при відправці файлу:', err);
-        res.status(500).send('Помилка при завантаженні файлу');
-      }
-    });
-  });
+  res.status(200).json(notes);
+});
 
+const upload = multer();
 
-app.listen(port, host, () => {
-  console.log(`Сервер запущено на http://${host}:${port}`);
+/**
+ * @swagger
+ * /write:
+ *   post:
+ *     summary: Create a new note
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/x-www-form-urlencoded:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               note_name:
+ *                 type: string
+ *               note:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Note created.
+ *       400:
+ *         description: Note already exists.
+ */
+app.post('/write', upload.none(), (req, res) => {
+  const noteName = req.body.note_name;
+  const noteText = req.body.note;
+  const notePath = path.join(NOTES_DIR, noteName + '.txt');
+
+  if (fs.existsSync(notePath)) {
+    return res.status(400).send('Note already exists');
+  }
+
+  fs.writeFileSync(notePath, noteText);
+  res.status(201).send('Created');
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on http://localhost:${PORT}`);
+  swaggerDocs(app, PORT);
 });
