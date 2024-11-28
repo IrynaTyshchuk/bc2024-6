@@ -89,6 +89,7 @@ app.get('/notes/:name', (req, res) => {
  *         description: Bad request.
  */
 app.put('/notes/:name', (req, res) => {
+  debugger; // Брекпоінт: Перевірка запиту PUT
   const noteName = req.params.name;
   const notePath = path.join(NOTES_DIR, noteName + '.txt');
   
